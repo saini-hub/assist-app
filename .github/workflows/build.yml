@@ -17,8 +17,8 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.offline.geminilauncher"
-              android:versionCode="1"
-              android:versionName="1.0">
+              android:versionCode="2"
+              android:versionName="1.1">
               <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
               <application android:label="Gemini Web Trigger">
                   <activity
@@ -48,17 +48,19 @@ jobs:
           import android.os.Bundle;
 
           public class AssistActivity extends Activity {
+              private static final String TARGET_URL = "https://gemini.google.com/u/8/app?pageId=none&authuser=vikashsainibigboss@gmail.com";
+
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
                   try {
-                      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://gemini.google.com/app"));
+                      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(TARGET_URL));
                       intent.setComponent(new ComponentName("com.android.chrome", "com.google.android.apps.chrome.Main"));
                       intent.putExtra("com.android.browser.application_id", "com.android.chrome");
                       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                       startActivity(intent);
                   } catch (Exception e) {
-                      Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse("https://gemini.google.com/app"));
+                      Intent fallback = new Intent(Intent.ACTION_VIEW, Uri.parse(TARGET_URL));
                       fallback.setPackage("com.android.chrome");
                       fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                       startActivity(fallback);
