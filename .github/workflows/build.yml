@@ -17,15 +17,17 @@ jobs:
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               package="com.offline.geminilauncher"
-              android:versionCode="2"
-              android:versionName="1.1">
+              android:versionCode="4"
+              android:versionName="2.0">
               <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
               <application android:label="Gemini Web Trigger">
                   <activity
                       android:name=".AssistActivity"
-                      android:theme="@android:style/Theme.NoDisplay"
+                      android:theme="@android:style/Theme.DeviceDefault.Dialog.NoActionBar"
                       android:excludeFromRecents="true"
                       android:noHistory="true"
+                      android:showWhenLocked="true"
+                      android:turnScreenOn="true"
                       android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.ASSIST" />
@@ -42,17 +44,582 @@ jobs:
           package com.offline.geminilauncher;
 
           import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.app.KeyguardManager;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
           import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.DialogInterface;
           import android.content.Intent;
+          import android.content.SharedPreferences;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
           import android.net.Uri;
+          import android.os.Build;
           import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.view.WindowManager;
+          import android.widget.Button;
+          import android.widget.CheckBox;
+          import android.widget.CompoundButton;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          import java.util.ArrayList;
+          import java.util.List;
 
           public class AssistActivity extends Activity {
               private static final String TARGET_URL = "https://gemini.google.com/u/8/app?pageId=none&authuser=vikashsainibigboss@gmail.com";
+              private static final String PREFS_NAME = "gemini_presets_prefs";
+              private static final String KEY_PRESETS = "presets_json";
+
+              private AlertDialog currentDialog;
+
+              private static class RowInput {
+                  CheckBox checkBox;
+                  EditText editText;
+              }
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+
+                  if (Build.VERSION.SDK_INT >= 27) {
+                      setShowWhenLocked(true);
+                      setTurnScreenOn(true);
+                  }
+                  getWindow().addFlags(
+                      WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED |
+                      WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON |
+                      WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                  );
+
+                  ensureDefaultPresets();
+                  showPowerButtonPopup();
+              }
+
+              private void ensureDefaultPresets() {
+                  SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  if (!prefs.contains(KEY_PRESETS)) {
+                      try {
+                          JSONArray arr = new JSONArray();
+
+                          JSONObject p1 = new JSONObject();
+                          p1.put("name", "Finlynq CA");
+                          p1.put("enabled", true);
+                          JSONArray c1 = new JSONArray();
+                          c1.put(new JSONObject().put("name", "Finlynq").put("enabled", true));
+                          p1.put("connectors", c1);
+                          JSONArray s1 = new JSONArray();
+                          s1.put(new JSONObject().put("name", "personal-ca-finlynq").put("enabled", true));
+                          p1.put("skills", s1);
+                          arr.put(p1);
+
+                          JSONObject p2 = new JSONObject();
+                          p2.put("name", "Clockify + TickTick");
+                          p2.put("enabled", true);
+                          JSONArray c2 = new JSONArray();
+                          c2.put(new JSONObject().put("name", "Clockify").put("enabled", true));
+                          c2.put(new JSONObject().put("name", "TickTick").put("enabled", true));
+                          p2.put("connectors", c2);
+                          p2.put("skills", new JSONArray());
+                          arr.put(p2);
+
+                          prefs.edit().putString(KEY_PRESETS, arr.toString()).apply();
+                      } catch (Exception ignored) {}
+                  }
+              }
+
+              private JSONArray loadPresets() {
+                  SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  String raw = prefs.getString(KEY_PRESETS, "[]");
+                  try {
+                      return new JSONArray(raw);
+                  } catch (Exception e) {
+                      return new JSONArray();
+                  }
+              }
+
+              private void savePresets(JSONArray array) {
+                  SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                  prefs.edit().putString(KEY_PRESETS, array.toString()).apply();
+              }
+
+              private void switchDialog(AlertDialog nextDialog) {
+                  if (currentDialog != null && currentDialog.isShowing()) {
+                      currentDialog.setOnCancelListener(null);
+                      currentDialog.dismiss();
+                  }
+                  currentDialog = nextDialog;
+                  currentDialog.show();
+              }
+
+              // 1. POWER BUTTON POPUP (1-Tap Single Selection)
+              private void showPowerButtonPopup() {
+                  final JSONArray allPresets = loadPresets();
+                  final List<JSONObject> enabledList = new ArrayList<JSONObject>();
+                  final List<String> displayTitles = new ArrayList<String>();
+
+                  for (int i = 0; i < allPresets.length(); i++) {
+                      JSONObject obj = allPresets.optJSONObject(i);
+                      if (obj != null && obj.optBoolean("enabled", true)) {
+                          enabledList.add(obj);
+                          displayTitles.add(obj.optString("name", "Custom"));
+                      }
+                  }
+
+                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  builder.setTitle("Select Custom Mode");
+
+                  if (displayTitles.isEmpty()) {
+                      builder.setMessage("Koi Custom Name tick nahi hai.\nSettings mein jakar tick ya create karein.");
+                  } else {
+                      final String[] items = displayTitles.toArray(new String[0]);
+                      builder.setItems(items, new DialogInterface.OnClickListener() {
+                          @Override
+                          public void onClick(DialogInterface dialog, int which) {
+                              JSONObject chosen = enabledList.get(which);
+                              String payload = buildClipboardText(chosen);
+                              unlockAndLaunchGemini(payload);
+                          }
+                      });
+                  }
+
+                  builder.setNeutralButton("⚙ Settings", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          showSettingsDialog();
+                      }
+                  });
+
+                  builder.setNegativeButton("Direct Open", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          unlockAndLaunchGemini("");
+                      }
+                  });
+
+                  builder.setOnCancelListener(new DialogInterface.OnCancelListener() {
+                      @Override
+                      public void onCancel(DialogInterface dialog) {
+                          finish();
+                      }
+                  });
+
+                  switchDialog(builder.create());
+              }
+
+              private String buildClipboardText(JSONObject preset) {
+                  StringBuilder sb = new StringBuilder();
+                  JSONArray connectors = preset.optJSONArray("connectors");
+                  if (connectors != null) {
+                      for (int i = 0; i < connectors.length(); i++) {
+                          JSONObject c = connectors.optJSONObject(i);
+                          if (c != null && c.optBoolean("enabled", true)) {
+                              String name = c.optString("name", "").trim();
+                              if (!name.isEmpty()) {
+                                  if (!name.startsWith("@")) {
+                                      sb.append("@");
+                                  }
+                                  sb.append(name).append(" ");
+                              }
+                          }
+                      }
+                  }
+                  JSONArray skills = preset.optJSONArray("skills");
+                  if (skills != null) {
+                      for (int i = 0; i < skills.length(); i++) {
+                          JSONObject s = skills.optJSONObject(i);
+                          if (s != null && s.optBoolean("enabled", true)) {
+                              String name = s.optString("name", "").trim();
+                              if (!name.isEmpty()) {
+                                  sb.append(name).append(" ");
+                              }
+                          }
+                      }
+                  }
+                  return sb.toString();
+              }
+
+              // 2. SETTINGS LIST DIALOG (Check/Uncheck, Edit, Delete, Create New)
+              private void showSettingsDialog() {
+                  final JSONArray presets = loadPresets();
+
+                  ScrollView scrollView = new ScrollView(this);
+                  LinearLayout container = new LinearLayout(this);
+                  container.setOrientation(LinearLayout.VERTICAL);
+                  int pad = dp(16);
+                  container.setPadding(pad, pad / 2, pad, pad / 2);
+                  scrollView.addView(container);
+
+                  if (presets.length() == 0) {
+                      TextView empty = new TextView(this);
+                      empty.setText("Abhi koi Custom Name nahi hai.\nNeeche '+ Create New Custom' dabayein.");
+                      empty.setPadding(0, dp(12), 0, dp(12));
+                      container.addView(empty);
+                  }
+
+                  for (int i = 0; i < presets.length(); i++) {
+                      final int index = i;
+                      final JSONObject item = presets.optJSONObject(i);
+                      if (item == null) continue;
+
+                      LinearLayout row = new LinearLayout(this);
+                      row.setOrientation(LinearLayout.HORIZONTAL);
+                      row.setGravity(Gravity.CENTER_VERTICAL);
+                      row.setPadding(0, dp(8), 0, dp(8));
+
+                      CheckBox cb = new CheckBox(this);
+                      cb.setChecked(item.optBoolean("enabled", true));
+                      cb.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+                          @Override
+                          public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                              try {
+                                  item.put("enabled", isChecked);
+                                  savePresets(presets);
+                              } catch (Exception ignored) {}
+                          }
+                      });
+                      row.addView(cb);
+
+                      LinearLayout textCol = new LinearLayout(this);
+                      textCol.setOrientation(LinearLayout.VERTICAL);
+                      LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                      textParams.setMargins(dp(8), 0, dp(8), 0);
+                      textCol.setLayoutParams(textParams);
+
+                      TextView titleView = new TextView(this);
+                      titleView.setText(item.optString("name", "Custom"));
+                      titleView.setTextSize(16);
+                      titleView.setTypeface(null, Typeface.BOLD);
+                      textCol.addView(titleView);
+
+                      String summary = buildClipboardText(item).trim();
+                      TextView subView = new TextView(this);
+                      subView.setText(summary.isEmpty() ? "(Tap to edit connectors/skills)" : summary);
+                      subView.setTextSize(12);
+                      subView.setTextColor(Color.LTGRAY);
+                      textCol.addView(subView);
+
+                      // Tap on Custom Name to Edit its Connectors & Skills check/uncheck
+                      textCol.setOnClickListener(new View.OnClickListener() {
+                          @Override
+                          public void onClick(View v) {
+                              showStep1ConnectorsDialog(index);
+                          }
+                      });
+                      row.addView(textCol);
+
+                      Button delBtn = new Button(this);
+                      delBtn.setText("✕");
+                      delBtn.setOnClickListener(new View.OnClickListener() {
+                          @Override
+                          public void onClick(View v) {
+                              JSONArray updated = new JSONArray();
+                              for (int j = 0; j < presets.length(); j++) {
+                                  if (j != index) updated.put(presets.opt(j));
+                              }
+                              savePresets(updated);
+                              showSettingsDialog();
+                          }
+                      });
+                      row.addView(delBtn);
+
+                      container.addView(row);
+                  }
+
+                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  builder.setTitle("⚙ Settings (Custom List)");
+                  builder.setView(scrollView);
+
+                  builder.setPositiveButton("+ Create New Custom", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          showStep1ConnectorsDialog(-1);
+                      }
+                  });
+
+                  builder.setNegativeButton("Back", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          showPowerButtonPopup();
+                      }
+                  });
+
+                  builder.setOnCancelListener(new DialogInterface.OnCancelListener() {
+                      @Override
+                      public void onCancel(DialogInterface dialog) {
+                          showPowerButtonPopup();
+                      }
+                  });
+
+                  switchDialog(builder.create());
+              }
+
+              // 3. WIZARD STEP 1: Custom Name + Connectors (with inside + button)
+              private void showStep1ConnectorsDialog(final int editIndex) {
+                  final JSONArray presets = loadPresets();
+                  JSONObject existing = (editIndex >= 0 && editIndex < presets.length()) ? presets.optJSONObject(editIndex) : null;
+
+                  ScrollView scrollView = new ScrollView(this);
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  int pad = dp(16);
+                  root.setPadding(pad, pad / 2, pad, pad / 2);
+                  scrollView.addView(root);
+
+                  TextView nameLabel = new TextView(this);
+                  nameLabel.setText("Enter Custom Name:");
+                  nameLabel.setTypeface(null, Typeface.BOLD);
+                  root.addView(nameLabel);
+
+                  final EditText customNameInput = new EditText(this);
+                  customNameInput.setHint("e.g. Finance Tracker");
+                  if (existing != null) {
+                      customNameInput.setText(existing.optString("name", ""));
+                  }
+                  root.addView(customNameInput);
+
+                  TextView connLabel = new TextView(this);
+                  connLabel.setText("Enter Connectors Name (Tick & + to add box):");
+                  connLabel.setTypeface(null, Typeface.BOLD);
+                  connLabel.setPadding(0, dp(12), 0, dp(4));
+                  root.addView(connLabel);
+
+                  final LinearLayout rowsContainer = new LinearLayout(this);
+                  rowsContainer.setOrientation(LinearLayout.VERTICAL);
+                  root.addView(rowsContainer);
+
+                  final List<RowInput> connectorInputs = new ArrayList<RowInput>();
+
+                  JSONArray existingConns = (existing != null) ? existing.optJSONArray("connectors") : null;
+                  if (existingConns != null && existingConns.length() > 0) {
+                      for (int i = 0; i < existingConns.length(); i++) {
+                          JSONObject c = existingConns.optJSONObject(i);
+                          if (c != null) {
+                              addDynamicBoxRow(rowsContainer, connectorInputs, c.optString("name", ""), c.optBoolean("enabled", true), "Connector (e.g. Finlynq)");
+                          }
+                      }
+                  } else {
+                      addDynamicBoxRow(rowsContainer, connectorInputs, "", true, "Connector (e.g. Finlynq)");
+                  }
+
+                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  builder.setTitle(editIndex >= 0 ? "Edit Custom (Step 1/2)" : "Create New Custom (Step 1/2)");
+                  builder.setView(scrollView);
+
+                  builder.setPositiveButton("Next ➔", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          String cName = customNameInput.getText().toString().trim();
+                          if (cName.isEmpty()) {
+                              cName = "Custom " + (presets.length() + 1);
+                          }
+                          JSONArray connArray = new JSONArray();
+                          for (RowInput ri : connectorInputs) {
+                              String val = ri.editText.getText().toString().trim();
+                              if (!val.isEmpty()) {
+                                  try {
+                                      JSONObject o = new JSONObject();
+                                      o.put("name", val);
+                                      o.put("enabled", ri.checkBox.isChecked());
+                                      connArray.put(o);
+                                  } catch (Exception ignored) {}
+                              }
+                          }
+                          showStep2SkillsDialog(editIndex, cName, connArray);
+                      }
+                  });
+
+                  builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          showSettingsDialog();
+                      }
+                  });
+
+                  builder.setOnCancelListener(new DialogInterface.OnCancelListener() {
+                      @Override
+                      public void onCancel(DialogInterface dialog) {
+                          showSettingsDialog();
+                      }
+                  });
+
+                  switchDialog(builder.create());
+              }
+
+              // 4. WIZARD STEP 2: Skills Name (with inside + button -> Okay / Cancel)
+              private void showStep2SkillsDialog(final int editIndex, final String customName, final JSONArray connectorsArray) {
+                  final JSONArray presets = loadPresets();
+                  JSONObject existing = (editIndex >= 0 && editIndex < presets.length()) ? presets.optJSONObject(editIndex) : null;
+
+                  ScrollView scrollView = new ScrollView(this);
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  int pad = dp(16);
+                  root.setPadding(pad, pad / 2, pad, pad / 2);
+                  scrollView.addView(root);
+
+                  TextView skillLabel = new TextView(this);
+                  skillLabel.setText("Enter Skills Name (Tick & + to add box):");
+                  skillLabel.setTypeface(null, Typeface.BOLD);
+                  root.addView(skillLabel);
+
+                  final LinearLayout rowsContainer = new LinearLayout(this);
+                  rowsContainer.setOrientation(LinearLayout.VERTICAL);
+                  root.addView(rowsContainer);
+
+                  final List<RowInput> skillInputs = new ArrayList<RowInput>();
+
+                  JSONArray existingSkills = (existing != null) ? existing.optJSONArray("skills") : null;
+                  if (existingSkills != null && existingSkills.length() > 0) {
+                      for (int i = 0; i < existingSkills.length(); i++) {
+                          JSONObject s = existingSkills.optJSONObject(i);
+                          if (s != null) {
+                              addDynamicBoxRow(rowsContainer, skillInputs, s.optString("name", ""), s.optBoolean("enabled", true), "Skill name (optional)");
+                          }
+                      }
+                  } else {
+                      addDynamicBoxRow(rowsContainer, skillInputs, "", true, "Skill name (optional)");
+                  }
+
+                  AlertDialog.Builder builder = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+                  builder.setTitle("Enter Skills (Step 2/2)");
+                  builder.setView(scrollView);
+
+                  builder.setPositiveButton("Okay", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          JSONArray skillsArray = new JSONArray();
+                          for (RowInput ri : skillInputs) {
+                              String val = ri.editText.getText().toString().trim();
+                              if (!val.isEmpty()) {
+                                  try {
+                                      JSONObject o = new JSONObject();
+                                      o.put("name", val);
+                                      o.put("enabled", ri.checkBox.isChecked());
+                                      skillsArray.put(o);
+                                  } catch (Exception ignored) {}
+                              }
+                          }
+
+                          try {
+                              JSONObject newPreset = new JSONObject();
+                              newPreset.put("name", customName);
+                              boolean wasEnabled = (editIndex >= 0 && presets.optJSONObject(editIndex) != null)
+                                  ? presets.optJSONObject(editIndex).optBoolean("enabled", true)
+                                  : true;
+                              newPreset.put("enabled", wasEnabled);
+                              newPreset.put("connectors", connectorsArray);
+                              newPreset.put("skills", skillsArray);
+
+                              if (editIndex >= 0 && editIndex < presets.length()) {
+                                  presets.put(editIndex, newPreset);
+                              } else {
+                                  presets.put(newPreset);
+                              }
+                              savePresets(presets);
+                          } catch (Exception ignored) {}
+
+                          showSettingsDialog();
+                      }
+                  });
+
+                  builder.setNegativeButton("Cancel", new DialogInterface.OnClickListener() {
+                      @Override
+                      public void onClick(DialogInterface dialog, int which) {
+                          showSettingsDialog();
+                      }
+                  });
+
+                  builder.setOnCancelListener(new DialogInterface.OnCancelListener() {
+                      @Override
+                      public void onCancel(DialogInterface dialog) {
+                          showSettingsDialog();
+                      }
+                  });
+
+                  switchDialog(builder.create());
+              }
+
+              private void addDynamicBoxRow(final LinearLayout container, final List<RowInput> list, String initialText, boolean initialChecked, final String hint) {
+                  final LinearLayout row = new LinearLayout(this);
+                  row.setOrientation(LinearLayout.HORIZONTAL);
+                  row.setGravity(Gravity.CENTER_VERTICAL);
+
+                  CheckBox cb = new CheckBox(this);
+                  cb.setChecked(initialChecked);
+                  row.addView(cb);
+
+                  EditText et = new EditText(this);
+                  et.setHint(hint);
+                  et.setText(initialText);
+                  et.setSingleLine(true);
+                  LinearLayout.LayoutParams etParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                  et.setLayoutParams(etParams);
+                  row.addView(et);
+
+                  Button plusBtn = new Button(this);
+                  plusBtn.setText("+");
+                  plusBtn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          addDynamicBoxRow(container, list, "", true, hint);
+                      }
+                  });
+                  row.addView(plusBtn);
+
+                  final RowInput item = new RowInput();
+                  item.checkBox = cb;
+                  item.editText = et;
+                  list.add(item);
+
+                  container.addView(row);
+                  et.requestFocus();
+              }
+
+              // 5. UNLOCK PHONE IF LOCKED & LAUNCH CHROME GEMINI
+              private void unlockAndLaunchGemini(final String clipboardPayload) {
+                  if (clipboardPayload != null && !clipboardPayload.trim().isEmpty()) {
+                      ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                      ClipData clip = ClipData.newPlainText("gemini_preset", clipboardPayload);
+                      clipboard.setPrimaryClip(clip);
+                      Toast.makeText(this, "Copied: " + clipboardPayload.trim(), Toast.LENGTH_SHORT).show();
+                  }
+
+                  KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+                  if (km != null && km.isKeyguardLocked() && Build.VERSION.SDK_INT >= 26) {
+                      km.requestDismissKeyguard(this, new KeyguardManager.KeyguardDismissCallback() {
+                          @Override
+                          public void onDismissSucceeded() {
+                              openGeminiNow();
+                          }
+
+                          @Override
+                          public void onDismissCancelled() {
+                              finish();
+                          }
+
+                          @Override
+                          public void onDismissError() {
+                              openGeminiNow();
+                          }
+                      });
+                  } else {
+                      openGeminiNow();
+                  }
+              }
+
+              private void openGeminiNow() {
                   try {
                       Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(TARGET_URL));
                       intent.setComponent(new ComponentName("com.android.chrome", "com.google.android.apps.chrome.Main"));
@@ -68,6 +635,10 @@ jobs:
                   finish();
                   overridePendingTransition(0, 0);
               }
+
+              private int dp(int value) {
+                  return (int) (value * getResources().getDisplayMetrics().density);
+              }
           }
           EOF
 
@@ -78,7 +649,7 @@ jobs:
             -d obj src/com/offline/geminilauncher/AssistActivity.java
 
           "$BUILD_TOOLS/d8" --lib "$PLATFORM/android.jar" --output . \
-            obj/com/offline/geminilauncher/AssistActivity.class
+            obj/com/offline/geminilauncher/*.class
 
           "$BUILD_TOOLS/aapt2" link -o unsigned.apk \
             -I "$PLATFORM/android.jar" \
